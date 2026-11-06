@@ -1,0 +1,175 @@
+name: Security Audit Pro - free public repository scan
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scan:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SEMGREP_SEND_METRICS: 'off'
+    steps:
+      - name: Check out source (read-only)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install pinned Semgrep Community Edition
+        run: |
+          python3 -m venv .security-venv
+          .security-venv/bin/python -m pip install --disable-pip-version-check --no-input semgrep==1.183.0
+      - name: Run Semgrep static analysis
+        id: semgrep
+        continue-on-error: true
+        run: .security-venv/bin/semgrep scan --config=auto --json --output=semgrep.json .
+      - name: Run Trivy vulnerability, secret and configuration scans
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: 'v0.70.0'
+          scan-type: fs
+          scan-ref: '.'
+          scanners: vuln,secret,misconfig
+          format: json
+          output: trivy.json
+          exit-code: '0'
+      - name: Write source-free count summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          def safe_read(name):
+              try:
+                  obj = json.loads(Path(name).read_text(encoding='utf-8'))
+                  return obj if isinstance(obj, dict) else {}
+              except Exception:
+                  return {}
+          sem = safe_read('semgrep.json')
+          tri = safe_read('trivy.json')
+          parts = tri.get('Results') or []
+          counts = {
+              'Semgrep findings': len(sem.get('results') or []),
+              'Trivy vulnerabilities': sum(len(x.get('Vulnerabilities') or []) for x in parts),
+              'Trivy misconfigurations': sum(len(x.get('Misconfigurations') or []) for x in parts),
+              'Trivy potential secrets': sum(len(x.get('Secrets') or []) for x in parts),
+          }
+          location = os.environ.get('GITHUB_STEP_SUMMARY')
+          if location:
+              with open(location, 'a', encoding='utf-8') as report:
+                  report.write('## Security Audit Pro - scanner summary\n\n')
+                  for label, value in counts.items():
+                      report.write(f'- {label}: {value}\n')
+                  report.write('\nCounts are not independently validated vulnerabilities. Scanner failures may reduce coverage.\n')
+          print('Scanner counts:', counts)
+          PY
+      - name: Require both scanner reports
+        if: always()
+        run: test -s semgrep.json && test -s trivy.json
+      - name: Prepare sanitized CI report
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          import json, os, urllib.request
+          from pathlib import Path
+          def read_json(path):
+              try:
+                  data=json.loads(Path(path).read_text(encoding='utf-8'))
+                  return data if isinstance(data,dict) else None
+              except (OSError,ValueError):
+                  return None
+          sem=read_json('semgrep.json')
+          tri=read_json('trivy.json')
+          sem_results=sem.get('results') if isinstance(sem,dict) else None
+          tri_results=tri.get('Results') if isinstance(tri,dict) else None
+          sem_ok=isinstance(sem_results,list)
+          tri_ok=isinstance(tri_results,list)
+          sem_results=sem_results if sem_ok else []
+          tri_results=tri_results if tri_ok else []
+          def as_list(obj,key):
+              value=obj.get(key) if isinstance(obj,dict) else None
+              return value if isinstance(value,list) else []
+          findings=[]
+          def include(scanner, rule, file, line, severity):
+              if len(findings)>=60:return
+              if not isinstance(rule,str) or not isinstance(file,str):return
+              value={'scanner':scanner,'rule':rule[:140],'file':file[:180],'line':int(line) if str(line).isdigit() else 0,'severity':str(severity or 'unknown').lower()[:25]}
+              findings.append(value)
+          for f in sem_results:
+              if isinstance(f,dict):
+                  extra=f.get('extra') or {}
+                  include('semgrep',f.get('check_id'),f.get('path'),(f.get('start') or {}).get('line',0),extra.get('severity','warning'))
+          for group in tri_results:
+              if not isinstance(group,dict):continue
+              path=group.get('Target') or 'dependency-lockfile'
+              for f in as_list(group,'Vulnerabilities'):
+                  if isinstance(f,dict): include('trivy',f.get('VulnerabilityID'),path,0,f.get('Severity'))
+              for f in as_list(group,'Misconfigurations'):
+                  if isinstance(f,dict): include('trivy',f.get('ID'),path,0,f.get('Severity'))
+              for f in as_list(group,'Secrets'):
+                  if isinstance(f,dict): include('trivy',f.get('RuleID'),path,f.get('StartLine',0),f.get('Severity'))
+          payload={
+           'repository':os.environ['GITHUB_REPOSITORY'],
+           'run_id':os.environ['GITHUB_RUN_ID'],
+           'attempt':int(os.environ.get('GITHUB_RUN_ATTEMPT','1')),
+           'commit_sha':os.environ['GITHUB_SHA'],
+           'branch':os.environ.get('GITHUB_REF_NAME','main'),
+           'scanners':{'semgrep':'ok' if sem_ok else 'failed','trivy':'ok' if tri_ok else 'failed'},
+           'counts':{'semgrep':len(sem_results),'vulnerabilities':sum(len(as_list(g,'Vulnerabilities')) for g in tri_results),'misconfigurations':sum(len(as_list(g,'Misconfigurations')) for g in tri_results),'potential_secrets':sum(len(as_list(g,'Secrets')) for g in tri_results)},
+           'findings':findings
+          }
+          allowed=lambda x: isinstance(x,str) and len(x)<=180 and '..' not in x and re.fullmatch(r'[A-Za-z0-9_./:@+ -]+',x) is not None
+          payload['findings']=[x for x in payload['findings'] if allowed(x.get('file')) and allowed(x.get('rule'))][:60]
+          Path('ci-report.json').write_text(json.dumps(payload,separators=(',',':')),encoding='utf-8')
+          PY
+      - name: Hand off only sanitized metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: security-audit-pro-report
+          path: ci-report.json
+          retention-days: 1
+          if-no-files-found: error
+  ingest:
+    needs: scan
+    if: always() && github.event_name != 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download metadata only, no repository checkout
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: security-audit-pro-report
+      - name: Submit cryptographically verified GitHub OIDC report
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.parse
+          from pathlib import Path
+          raw=Path('ci-report.json').read_bytes()
+          if len(raw)>30000:raise ValueError('Report exceeds 30KB limit')
+          data=json.loads(raw)
+          if data.get('repository')!=os.environ['GITHUB_REPOSITORY'] or data.get('commit_sha')!=os.environ['GITHUB_SHA']:raise ValueError('GitHub identity and report disagree')
+          audience='https://security-audit-pro.vikitoree.workers.dev/ci-oidc'
+          base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
+          url=urllib.parse.urlparse(base)
+          if url.scheme!='https' or url.hostname!='token.actions.githubusercontent.com':raise ValueError('Untrusted OIDC host')
+          joiner='&' if '?' in base else '?'
+          query=base+joiner+'audience='+urllib.parse.quote(audience,safe='')
+          identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
+          with urllib.request.urlopen(identity,timeout=15) as response: token=json.load(response)['value']
+          req=urllib.request.Request(audience,data=raw,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
+          PY
