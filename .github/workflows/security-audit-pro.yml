@@ -171,5 +171,11 @@ jobs:
           identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
           with urllib.request.urlopen(identity,timeout=15) as response: token=json.load(response)['value']
           req=urllib.request.Request(audience,data=raw,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
-          with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
+          try:
+              with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
+          except urllib.error.HTTPError as exc:
+              print('Security Audit Pro response HTTP:',exc.code,'CF-Ray:',exc.headers.get('cf-ray'),'Content-Type:',exc.headers.get('content-type'))
+              detail=exc.read(400).decode('utf-8','replace')
+              print('API error:',detail[:180] if detail.lstrip().startswith('{') else '[non-JSON response]')
+              raise
           PY
