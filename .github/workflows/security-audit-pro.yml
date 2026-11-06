@@ -75,6 +75,9 @@ jobs:
         run: test -s semgrep.json && test -s trivy.json
       - name: Prepare sanitized CI report
         if: always()
+        env:
+          SAP_SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
+          SAP_TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -91,10 +94,10 @@ jobs:
           tri=read_json('trivy.json')
           sem_results=sem.get('results') if isinstance(sem,dict) else None
           tri_results=tri.get('Results') if isinstance(tri,dict) else None
-          sem_ok=isinstance(sem_results,list)
-          tri_ok=isinstance(tri_results,list)
+          sem_ok=isinstance(sem_results,list) and os.environ.get('SAP_SEMGREP_OUTCOME')=='success'
+          tri_ok=isinstance(tri,dict) and os.environ.get('SAP_TRIVY_OUTCOME')=='success'
           sem_results=sem_results if sem_ok else []
-          tri_results=tri_results if tri_ok else []
+          tri_results=tri_results if isinstance(tri_results,list) and tri_ok else []
           def as_list(obj,key):
               value=obj.get(key) if isinstance(obj,dict) else None
               return value if isinstance(value,list) else []
@@ -171,11 +174,5 @@ jobs:
           identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
           with urllib.request.urlopen(identity,timeout=15) as response: token=json.load(response)['value']
           req=urllib.request.Request(audience,data=raw,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'SecurityAuditPro-CI/1.0'},method='POST')
-          try:
-              with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
-          except urllib.error.HTTPError as exc:
-              print('Security Audit Pro response HTTP:',exc.code,'CF-Ray:',exc.headers.get('cf-ray'),'Content-Type:',exc.headers.get('content-type'))
-              detail=exc.read(400).decode('utf-8','replace')
-              print('API error:',detail[:180] if detail.lstrip().startswith('{') else '[non-JSON response]')
-              raise
+          with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
           PY
