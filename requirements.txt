@@ -1,4 +1,0 @@
-# TEST FIXTURE ONLY. Known old versions for dependency vulnerability detection.
-# Do not install these packages.
-requests==2.19.1
-urllib3==1.25.1
