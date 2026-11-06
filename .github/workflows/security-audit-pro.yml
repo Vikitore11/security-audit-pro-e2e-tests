@@ -26,13 +26,13 @@ jobs:
       - name: Run Semgrep static analysis
         id: semgrep
         continue-on-error: true
-        run: $RUNNER_TEMP/sap-venv/bin/semgrep scan --config=p/ci --metrics=off --json --output=semgrep.json .
+        run: $RUNNER_TEMP/sap-venv/bin/semgrep scan --config=p/ci --config=p/bandit --metrics=off --json --output=semgrep.json .
       - name: Run Trivy vulnerability, secret and configuration scans
         id: trivy
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          version: 'v0.70.0'
+          version: 'v0.76.2'
           scan-type: fs
           scan-ref: '.'
           scanners: vuln,secret,misconfig
