@@ -165,7 +165,7 @@ jobs:
           audience='https://security-audit-pro.vikitoree.workers.dev/ci-oidc'
           base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
           url=urllib.parse.urlparse(base)
-          if url.scheme!='https' or url.hostname not in ('token.actions.githubusercontent.com','pipelines.actions.githubusercontent.com'):raise ValueError('Untrusted OIDC host')
+          if url.scheme!='https' or not (url.hostname and (url.hostname=='token.actions.githubusercontent.com' or url.hostname.endswith('.actions.githubusercontent.com'))):raise ValueError('Untrusted OIDC host')
           joiner='&' if '?' in base else '?'
           query=base+joiner+'audience='+urllib.parse.quote(audience,safe='')
           identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
