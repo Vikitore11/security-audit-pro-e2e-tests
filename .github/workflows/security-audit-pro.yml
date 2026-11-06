@@ -26,7 +26,7 @@ jobs:
       - name: Run Semgrep static analysis
         id: semgrep
         continue-on-error: true
-        run: .security-venv/bin/semgrep scan --config=auto --json --output=semgrep.json .
+        run: .security-venv/bin/semgrep scan --config=p/ci --metrics=off --json --output=semgrep.json .
       - name: Run Trivy vulnerability, secret and configuration scans
         id: trivy
         continue-on-error: true
@@ -165,7 +165,7 @@ jobs:
           audience='https://security-audit-pro.vikitoree.workers.dev/ci-oidc'
           base=os.environ['ACTIONS_ID_TOKEN_REQUEST_URL']
           url=urllib.parse.urlparse(base)
-          if url.scheme!='https' or url.hostname!='token.actions.githubusercontent.com':raise ValueError('Untrusted OIDC host')
+          if url.scheme!='https' or url.hostname not in ('token.actions.githubusercontent.com','pipelines.actions.githubusercontent.com'):raise ValueError('Untrusted OIDC host')
           joiner='&' if '?' in base else '?'
           query=base+joiner+'audience='+urllib.parse.quote(audience,safe='')
           identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
