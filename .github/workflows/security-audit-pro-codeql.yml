@@ -26,6 +26,121 @@ jobs:
           build-mode: none
           queries: security-extended
       - name: Analyze and publish results to GitHub Security
+        id: codeql_analyze
         uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26
         with:
           category: /language:python
+          output: codeql-results
+      - name: Normalize SARIF without source lines or secret matches
+        if: always()
+        env:
+          SAP_CODEQL_OUTCOME: ${{ steps.codeql_analyze.outcome }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          findings = []
+          total = 0
+          readable = 0
+          for filename in sorted(Path("codeql-results").rglob("*.sarif")):
+              try:
+                  data = json.loads(filename.read_text(encoding="utf-8"))
+                  if data.get("version") != "2.1.0":
+                      continue
+                  for run in data.get("runs", []):
+                      if not isinstance(run, dict):
+                          continue
+                      tool = ((run.get("tool") or {}).get("driver") or {})
+                      if "CodeQL" not in str(tool.get("name", "")):
+                          continue
+                      readable += 1
+                      for result in run.get("results") or []:
+                          if not isinstance(result, dict):
+                              continue
+                          total += 1
+                          if len(findings) >= 60:
+                              continue
+                          locations = result.get("locations") or []
+                          if not locations:
+                              continue
+                          physical = (locations[0] or {}).get("physicalLocation") or {}
+                          artifact = physical.get("artifactLocation") or {}
+                          region = physical.get("region") or {}
+                          rule = result.get("ruleId")
+                          file = artifact.get("uri")
+                          if not isinstance(rule, str) or not isinstance(file, str):
+                              continue
+                          if not rule or not file or ".." in file or any(ch in file for ch in "<>"):
+                              continue
+                          try:
+                              line = int(region.get("startLine") or 0)
+                          except (ValueError, TypeError):
+                              line = 0
+                          level = str(result.get("level") or "unknown").lower()
+                          if level not in ("error", "warning", "note", "unknown"):
+                              level = "unknown"
+                          findings.append({"rule": rule[:130], "file": file[:180], "line": max(0, line), "severity": level})
+              except (OSError, ValueError, TypeError):
+                  continue
+          status = "ok" if readable > 0 and os.environ.get("SAP_CODEQL_OUTCOME") == "success" else "failed"
+          payload = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "branch": os.environ.get("GITHUB_REF_NAME", "main"),
+              "status": status,
+              "count": total,
+              "findings": findings,
+          }
+          Path("codeql-report.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+          print("CodeQL SARIF files parsed:", readable, "candidate findings:", total, "status:", status)
+          PY
+      - name: Hand off sanitized CodeQL metadata only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codeql-sanitized-report
+          path: codeql-report.json
+          retention-days: 1
+          if-no-files-found: error
+  ingest:
+    needs: codeql
+    if: always() && github.event_name != 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download sanitized findings without checking out source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: codeql-sanitized-report
+      - name: Submit signed CodeQL report to Security Audit Pro
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          from pathlib import Path
+          raw = Path("codeql-report.json").read_bytes()
+          if len(raw) > 30000:
+              raise ValueError("CodeQL report exceeds size limit")
+          payload = json.loads(raw)
+          if payload.get("repository") != os.environ["GITHUB_REPOSITORY"] or payload.get("commit_sha") != os.environ["GITHUB_SHA"]:
+              raise ValueError("CodeQL report identity mismatch")
+          audience = "https://security-audit-pro.vikitoree.workers.dev/codeql-oidc"
+          oidc_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          u = urllib.parse.urlparse(oidc_url)
+          if u.scheme != "https" or not u.hostname or not (u.hostname == "token.actions.githubusercontent.com" or u.hostname.endswith(".actions.githubusercontent.com")):
+              raise ValueError("Unexpected GitHub OIDC host")
+          sep = "&" if "?" in oidc_url else "?"
+          oidc_url = oidc_url + sep + "audience=" + urllib.parse.quote(audience, safe="")
+          identity = urllib.request.Request(oidc_url, headers={"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"], "Accept": "application/json"})
+          with urllib.request.urlopen(identity, timeout=15) as response:
+              token = json.load(response)["value"]
+          request = urllib.request.Request(audience, data=raw, headers={"Authorization": "Bearer " + token, "Content-Type": "application/json", "User-Agent": "SecurityAuditPro-CI/1.0"}, method="POST")
+          with urllib.request.urlopen(request, timeout=15) as response:
+              print("CodeQL signed report received:", response.status)
+          PY
