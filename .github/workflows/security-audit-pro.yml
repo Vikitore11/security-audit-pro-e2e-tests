@@ -21,12 +21,12 @@ jobs:
           persist-credentials: false
       - name: Install pinned Semgrep Community Edition
         run: |
-          python3 -m venv .security-venv
-          .security-venv/bin/python -m pip install --disable-pip-version-check --no-input semgrep==1.183.0
+          python3 -m venv $RUNNER_TEMP/sap-venv
+          $RUNNER_TEMP/sap-venv/bin/python -m pip install --disable-pip-version-check --no-input semgrep==1.183.0
       - name: Run Semgrep static analysis
         id: semgrep
         continue-on-error: true
-        run: .security-venv/bin/semgrep scan --config=p/ci --metrics=off --json --output=semgrep.json .
+        run: $RUNNER_TEMP/sap-venv/bin/semgrep scan --config=p/ci --metrics=off --json --output=semgrep.json .
       - name: Run Trivy vulnerability, secret and configuration scans
         id: trivy
         continue-on-error: true
