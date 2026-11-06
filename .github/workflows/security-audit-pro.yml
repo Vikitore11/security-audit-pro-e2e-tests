@@ -170,7 +170,7 @@ jobs:
           query=base+joiner+'audience='+urllib.parse.quote(audience,safe='')
           identity=urllib.request.Request(query,headers={'Authorization':'Bearer '+os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN'],'Accept':'application/json'})
           with urllib.request.urlopen(identity,timeout=15) as response: token=json.load(response)['value']
-          req=urllib.request.Request(audience,data=raw,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          req=urllib.request.Request(audience,data=raw,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'SecurityAuditPro-CI/1.0'},method='POST')
           try:
               with urllib.request.urlopen(req,timeout=15) as response: print('Verified Security Audit Pro ingestion:',response.status)
           except urllib.error.HTTPError as exc:
