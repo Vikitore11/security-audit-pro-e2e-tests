@@ -1,0 +1,73 @@
+rules:
+  - id: sap.flask-ssrf-taint
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: Untrusted Flask request parameter reaches an outbound HTTP request. Validate destinations and restrict network egress.
+    metadata:
+      category: security
+      cwe: CWE-918
+    pattern-sources:
+      - pattern: request.args[$KEY]
+      - pattern: request.args.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: requests.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: requests.post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: requests.request($METHOD, $URL, ...)
+          - focus-metavariable: $URL
+
+  - id: sap.flask-path-traversal-taint
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: User-controlled Flask input reaches a local file path. Restrict allowed paths and verify containment.
+    metadata:
+      category: security
+      cwe: CWE-22
+    pattern-sources:
+      - pattern: request.args[$KEY]
+      - pattern: request.args.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: Path($PATH).read_text(...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH
+
+  - id: sap.flask-template-injection-taint
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: User-controlled Flask input is used as template source. Use a fixed template and pass input as data.
+    metadata:
+      category: security
+      cwe: CWE-1336
+    pattern-sources:
+      - pattern: request.args[$KEY]
+      - pattern: request.args.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: render_template_string($TEMPLATE, ...)
+          - focus-metavariable: $TEMPLATE
+
+  - id: sap.flask-open-redirect-taint
+    languages: [python]
+    mode: taint
+    severity: WARNING
+    message: User-controlled Flask input is used as a redirect target. Allowlist trusted local destinations.
+    metadata:
+      category: security
+      cwe: CWE-601
+    pattern-sources:
+      - pattern: request.args[$KEY]
+      - pattern: request.args.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: redirect($TARGET)
+          - focus-metavariable: $TARGET

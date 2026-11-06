@@ -28,7 +28,7 @@ jobs:
       - name: Run Semgrep static analysis
         id: semgrep
         continue-on-error: true
-        run: $RUNNER_TEMP/sap-venv/bin/semgrep scan --config=p/ci --config=p/bandit --metrics=off --json --output=semgrep.json .
+        run: $RUNNER_TEMP/sap-venv/bin/semgrep scan --config=p/ci --config=p/bandit --config=.semgrep/security-audit-pro.yml --metrics=off --json --output=semgrep.json .
       - name: Run Trivy vulnerability, secret and configuration scans
         id: trivy
         continue-on-error: true
