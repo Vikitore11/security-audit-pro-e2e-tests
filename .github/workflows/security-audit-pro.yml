@@ -188,7 +188,7 @@ jobs:
       contents: read
     env:
       TASTE_PINNED_COMMIT: f6b76575f949707b4e3c37cd86cb44b0b98643e8
-      TASTE_SKILL_TMP: ${{ runner.temp }}/taste-temp
+      TASTE_SKILL_TMP: /tmp/taste-native
       CI: "true"
     steps:
       - name: Checkout isolated public runner branch
