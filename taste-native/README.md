@@ -9,3 +9,5 @@ A successful workflow proves the original CLI and Chrome checkers execute and de
 The default `main` branch remains unchanged. This test is intentionally isolated from the Security Audit Pro files on `main`.
 
 Source: https://github.com/Leonxlnx/taste-skill (MIT).
+
+This branch additionally tests whether workflows introduced outside the default branch are dispatched on subsequent pushes.
