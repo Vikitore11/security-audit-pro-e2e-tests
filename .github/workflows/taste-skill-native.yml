@@ -192,6 +192,27 @@ jobs:
           fi
           node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync('taste-native/impeccable-detect.json','utf8'));if(!Array.isArray(rows)||!rows.some(x=>x.severity!=='advisory'&&x.advisory!==true)){process.exit(2)};console.log('Original Rust Impeccable CLI completed and detected '+rows.length+' issues')"
 
+      - name: Run original Impeccable CLI on approved public live website
+        shell: bash
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          CI: "true"
+        run: |
+          set -euo pipefail
+          target="$(node taste-native/scripts/check-target.mjs)"
+          echo "Running original Rust CLI on approved PUBLIC URL: $target"
+          set +e
+          taste-native/impeccable-upstream/target/debug/impeccable detect --json "$target" > taste-native/impeccable-live.json 2> taste-native/impeccable-live-stderr.log
+          code=$?
+          set -e
+          echo "$code" > taste-native/impeccable-live-exit.txt
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+            cat taste-native/impeccable-live-stderr.log
+            echo "Original live URL scan failed operationally with exit $code"
+            exit 1
+          fi
+          node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync('taste-native/impeccable-live.json','utf8'));if(!Array.isArray(rows))process.exit(2); console.log('Original Impeccable live PUBLIC URL findings:',rows.length)"
+
       - name: Save original Impeccable results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -202,3 +223,6 @@ jobs:
           path: |
             taste-native/impeccable-detect.json
             taste-native/impeccable-stderr.log
+            taste-native/impeccable-live.json
+            taste-native/impeccable-live-stderr.log
+            taste-native/impeccable-live-exit.txt
