@@ -86,9 +86,11 @@ jobs:
         working-directory: taste-native/fixtures
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           timeout 540s node ../upstream/skills/taste-skill/scripts/gate.mjs index.html --kind software --category "A test software service" --primary "Try the product" > ../gate.log 2>&1
           code=$?
+          set -e
           echo "$code" > ../gate-exit-code.txt
           tail -n 100 ../gate.log
           if [ "$code" -gt 1 ]; then
