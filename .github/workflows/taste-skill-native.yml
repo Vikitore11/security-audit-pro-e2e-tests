@@ -123,3 +123,79 @@ jobs:
             taste-native/gate.log
             taste-native/gate-exit-code.txt
             taste-native/native-result.json
+
+  original-impeccable-cli:
+    name: Original Impeccable Rust source and CLI smoke
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      IMPECCABLE_PINNED_COMMIT: 687bc381bc9091bf252c0a05303640561014a425
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - name: Checkout isolated public fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Verify Rust compiler and Cargo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version
+          cargo --version
+
+      - name: Checkout immutable original Impeccable engine source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/pbakaus/impeccable.git taste-native/impeccable-upstream
+          git -C taste-native/impeccable-upstream checkout --detach "$IMPECCABLE_PINNED_COMMIT"
+          test "$(git -C taste-native/impeccable-upstream rev-parse HEAD)" = "$IMPECCABLE_PINNED_COMMIT"
+          test -f taste-native/impeccable-upstream/Cargo.lock
+
+      - name: Run original Rust detector tests
+        working-directory: taste-native/impeccable-upstream
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p impeccable-detect
+
+      - name: Compile original Impeccable CLI
+        working-directory: taste-native/impeccable-upstream
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p impeccable
+          ./target/debug/impeccable engine-probe
+          ./target/debug/impeccable --version
+
+      - name: Run native CLI detection on deliberately flawed HTML fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          taste-native/impeccable-upstream/target/debug/impeccable detect taste-native/fixtures/index.html --json > taste-native/impeccable-detect.json 2> taste-native/impeccable-stderr.log
+          code=$?
+          set -e
+          echo "Native CLI exit: $code"
+          if [ "$code" -gt 1 ]; then
+            cat taste-native/impeccable-stderr.log
+            exit "$code"
+          fi
+          node -e "const fs=require('fs');const t=fs.readFileSync('taste-native/impeccable-detect.json','utf8');const x=JSON.parse(t);if(!x||typeof x!=='object')process.exit(2);console.log('Original Impeccable CLI JSON emitted')"
+
+      - name: Save original Impeccable results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: impeccable-native-cli-smoke
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            taste-native/impeccable-detect.json
+            taste-native/impeccable-stderr.log
