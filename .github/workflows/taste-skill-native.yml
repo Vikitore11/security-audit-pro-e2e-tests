@@ -183,11 +183,14 @@ jobs:
           code=$?
           set -e
           echo "Native CLI exit: $code"
-          if [ "$code" -gt 1 ]; then
+          # Original Rust CLI contract: 0 = no primary findings, 1 = scanning failed,
+          # 2 = completed successfully and found primary design issues.
+          if [ "$code" -ne 2 ]; then
+            echo "Expected original Impeccable CLI exit 2 for an intentionally defective fixture, observed $code"
             cat taste-native/impeccable-stderr.log
-            exit "$code"
+            exit 1
           fi
-          node -e "const fs=require('fs');const t=fs.readFileSync('taste-native/impeccable-detect.json','utf8');const x=JSON.parse(t);if(!x||typeof x!=='object')process.exit(2);console.log('Original Impeccable CLI JSON emitted')"
+          node -e "const fs=require('fs');const rows=JSON.parse(fs.readFileSync('taste-native/impeccable-detect.json','utf8'));if(!Array.isArray(rows)||!rows.some(x=>x.severity!=='advisory'&&x.advisory!==true)){process.exit(2)};console.log('Original Rust Impeccable CLI completed and detected '+rows.length+' issues')"
 
       - name: Save original Impeccable results
         if: always()
