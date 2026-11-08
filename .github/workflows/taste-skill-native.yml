@@ -1,0 +1,123 @@
+name: Taste Skill - original Node and Chrome smoke test
+
+on:
+  push:
+    branches:
+      - experiment/taste-native-ci
+    paths:
+      - .github/workflows/taste-skill-native.yml
+      - taste-native/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taste-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-smoke:
+    name: Pinned original Taste Skill gate in headless Chrome
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TASTE_PINNED_COMMIT: f6b76575f949707b4e3c37cd86cb44b0b98643e8
+      TASTE_SKILL_TMP: ${{ runner.temp }}/taste-temp
+      CI: "true"
+    steps:
+      - name: Checkout isolated public runner branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+
+      - name: Verify original runtime prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          google-chrome --version
+          node -e "if(Number(process.versions.node.split('.')[0]) < 22) process.exit(1)"
+          test -n "$(command -v google-chrome)"
+
+      - name: Checkout original Taste Skill at immutable commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/Leonxlnx/taste-skill.git taste-native/upstream
+          git -C taste-native/upstream checkout --detach "$TASTE_PINNED_COMMIT"
+          test "$(git -C taste-native/upstream rev-parse HEAD)" = "$TASTE_PINNED_COMMIT"
+          test -f taste-native/upstream/skills/taste-skill/scripts/gate.mjs
+          test -f taste-native/upstream/skills/taste-skill/scripts/consistency.mjs
+          test -f taste-native/upstream/skills/taste-skill/scripts/copy-lint.mjs
+          test -f taste-native/upstream/skills/taste-skill/assets/layout/check.mjs
+
+      - name: Run original copy lint on intentionally flawed fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          node taste-native/upstream/skills/taste-skill/scripts/copy-lint.mjs taste-native/fixtures/index.html --kind software --json > taste-native/copy-lint.json 2> taste-native/copy-lint.err
+          code=$?
+          set -e
+          if [ "$code" -gt 1 ]; then
+            cat taste-native/copy-lint.err
+            exit "$code"
+          fi
+          node -e "const r=require('./taste-native/copy-lint.json'); if(!Array.isArray(r.files)||!r.files.length) process.exit(2)"
+          echo "Original copy-lint completed with exit $code"
+
+      - name: Arm the original finish gate
+        working-directory: taste-native/fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ../upstream/skills/taste-skill/scripts/gate.mjs --start index.html --new --kind software --category "A test software service" --primary "Try the product" --rounds 2
+
+      - name: Execute original finish gate and its original Chrome checkers
+        working-directory: taste-native/fixtures
+        shell: bash
+        run: |
+          set -uo pipefail
+          timeout 540s node ../upstream/skills/taste-skill/scripts/gate.mjs index.html --kind software --category "A test software service" --primary "Try the product" > ../gate.log 2>&1
+          code=$?
+          echo "$code" > ../gate-exit-code.txt
+          tail -n 100 ../gate.log
+          if [ "$code" -gt 1 ]; then
+            echo "Original gate unavailable or errored: exit $code"
+            exit 1
+          fi
+          if ! grep -Eq '^GATE: (FAIL|PASS|OPEN)\b' ../gate.log; then
+            echo "No original gate verdict found"
+            exit 1
+          fi
+
+      - name: Verify meaningful detection and produce structured report
+        shell: bash
+        run: |
+          set -euo pipefail
+          node taste-native/scripts/verify.mjs
+          cat taste-native/native-result.json
+          cat taste-native/native-result.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save original gate and copy reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: taste-original-native-smoke
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            taste-native/copy-lint.json
+            taste-native/copy-lint.err
+            taste-native/gate.log
+            taste-native/gate-exit-code.txt
+            taste-native/native-result.json
