@@ -110,6 +110,61 @@ jobs:
           cat taste-native/native-result.json
           cat taste-native/native-result.json >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run original Taste Skill checkers on approved public website
+        shell: bash
+        timeout-minutes: 7
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          set -euo pipefail
+          target="$(node taste-native/scripts/check-target.mjs)"
+          mkdir -p taste-native/live-taste
+          echo "Original Taste Skill consistency quick check of approved PUBLIC URL: $target"
+          set +e
+          timeout 200s node taste-native/upstream/skills/taste-skill/scripts/consistency.mjs "$target" --widths 390,768 --quick --json --page software --out taste-native/live-taste > taste-native/live-consistency-stdout.json 2> taste-native/live-consistency-stderr.log
+          consistency_code=$?
+          set -e
+          echo "$consistency_code" > taste-native/live-consistency-exit.txt
+          if [ "$consistency_code" -ne 0 ] && [ "$consistency_code" -ne 1 ]; then
+            cat taste-native/live-consistency-stderr.log
+            echo "Original consistency CLI could not inspect the public site"
+            exit 1
+          fi
+          test -s taste-native/live-taste/report.json
+          node -e "const x=require('./taste-native/live-taste/report.json'); if(!Array.isArray(x.widths)||x.widths.length<1)process.exit(2);console.log('Original consistency checked',x.widths.length,'public page viewport(s)')"
+          if [ -s taste-native/live-taste/rendered.html ]; then
+            set +e
+            node taste-native/upstream/skills/taste-skill/scripts/copy-lint.mjs taste-native/live-taste/rendered.html --kind software --json > taste-native/live-copy.json 2> taste-native/live-copy-stderr.log
+            copy_code=$?
+            set -e
+            if [ "$copy_code" -ne 0 ] && [ "$copy_code" -ne 1 ]; then
+              cat taste-native/live-copy-stderr.log
+              echo "Original copy-lint failed on rendered public HTML"
+              exit 1
+            fi
+            node -e "const x=require('./taste-native/live-copy.json');if(!Array.isArray(x.files)||!x.files.length)process.exit(2)"
+          fi
+
+      - name: Run original Taste Skill layout checker on approved public website
+        shell: bash
+        timeout-minutes: 4
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          set -euo pipefail
+          target="$(node taste-native/scripts/check-target.mjs)"
+          set +e
+          timeout 150s node taste-native/upstream/skills/taste-skill/assets/layout/check.mjs --url "$target" --sizes 390x844 --json > taste-native/live-layout.json 2> taste-native/live-layout-stderr.log
+          layout_code=$?
+          set -e
+          echo "$layout_code" > taste-native/live-layout-exit.txt
+          if [ "$layout_code" -ne 0 ] && [ "$layout_code" -ne 1 ]; then
+            cat taste-native/live-layout-stderr.log
+            echo "Original layout checker failed to inspect the public page"
+            exit 1
+          fi
+          node -e "const x=require('./taste-native/live-layout.json');if(!x||typeof x!=='object')process.exit(2);console.log('Original Taste Skill layout checker returned structured JSON')"
+
       - name: Save original gate and copy reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -123,6 +178,15 @@ jobs:
             taste-native/gate.log
             taste-native/gate-exit-code.txt
             taste-native/native-result.json
+            taste-native/live-taste/report.json
+            taste-native/live-consistency-stdout.json
+            taste-native/live-consistency-stderr.log
+            taste-native/live-consistency-exit.txt
+            taste-native/live-copy.json
+            taste-native/live-copy-stderr.log
+            taste-native/live-layout.json
+            taste-native/live-layout-stderr.log
+            taste-native/live-layout-exit.txt
 
   original-impeccable-cli:
     name: Original Impeccable Rust source and CLI smoke
